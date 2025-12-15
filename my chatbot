@@ -1,0 +1,102 @@
+import streamlit as st
+from PyPDF2 import PdfReader
+
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_community.vectorstores import FAISS
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.prompts import ChatPromptTemplate
+
+# -----------------------------
+# CONFIGURATION
+# -----------------------------
+OPENAI_API_KEY = "PASTE_YOUR_OPENAI_API_KEY_HERE"
+
+st.set_page_config(page_title="NoteBot", layout="wide")
+st.header("📘 NoteBot")
+
+# -----------------------------
+# SIDEBAR
+# -----------------------------
+with st.sidebar:
+    st.title("My Notes")
+    file = st.file_uploader(
+        "Upload notes PDF and start asking questions",
+        type="pdf"
+    )
+
+# -----------------------------
+# PDF PROCESSING
+# -----------------------------
+if file is not None:
+    pdf_reader = PdfReader(file)
+    text = ""
+
+    for page in pdf_reader.pages:
+        extracted_text = page.extract_text()
+        if extracted_text:
+            text += extracted_text
+
+    # -----------------------------
+    # TEXT SPLITTING
+    # -----------------------------
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=300,
+        chunk_overlap=50,
+        length_function=len
+    )
+    chunks = splitter.split_text(text)
+
+    # -----------------------------
+    # EMBEDDINGS & VECTOR STORE
+    # -----------------------------
+    embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY)
+    vector_store = FAISS.from_texts(chunks, embeddings)
+
+    # -----------------------------
+    # USER QUERY
+    # -----------------------------
+    user_query = st.text_input("Type your query here")
+
+    if user_query:
+        matching_chunks = vector_store.similarity_search(user_query)
+
+        # -----------------------------
+        # LLM
+        # -----------------------------
+        llm = ChatOpenAI(
+            api_key=OPENAI_API_KEY,
+            model="gpt-3.5-turbo",
+            temperature=0,
+            max_tokens=300
+        )
+
+        # -----------------------------
+        # PROMPT
+        # -----------------------------
+        customized_prompt = ChatPromptTemplate.from_template(
+            """
+            You are my assistant tutor.
+            Answer the question based on the following context.
+            If you do not know the answer, say "I don't know Jenny".
+
+            Context:
+            {context}
+
+            Question:
+            {input}
+            """
+        )
+
+        # -----------------------------
+        # CHAIN
+        # -----------------------------
+        chain = create_stuff_documents_chain(llm, customized_prompt)
+
+        response = chain.invoke({
+            "input": user_query,
+            "input_documents": matching_chunks
+        })
+
+        st.subheader("📌 Answer")
+        st.write(response)
